@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronorag-lite"
+version = "0.1.0"
+description = "ChronoRAG-Lite: time-aware GraphRAG-lite with DHQC controller and audit cards"
+readme = "docs/README-lite.md"
+requires-python = ">=3.10"
+license = {text = "Apache-2.0"}
+authors = [{ name = "SSKG", email = "dev@example.com" }]
+
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "pydantic",
+  "pandas",
+  "numpy",
+  "scikit-learn",
+  "sentence-transformers",
+  "requests",
+  "tqdm",
+  "python-dotenv",
+  "openpyxl",
+  "rich",
+  "faiss-cpu",
+  "neo4j",
+  "transformers",
+  "fastembed",
+  "pytest",
+  "streamlit"
+]
+
+[project.optional-dependencies]
+otel = ["opentelemetry-sdk", "opentelemetry-api"]
+
+[tool.setuptools]
+packages = ["app", "ingest", "tools", "ui"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+pythonpath = ["."]

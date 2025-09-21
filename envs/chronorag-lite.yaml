@@ -1,0 +1,30 @@
+# envs/chronorag-lite.yaml
+
+name: chronorag-lite
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - faiss-cpu
+  - fastapi
+  - uvicorn
+  - streamlit
+  - neo4j
+  - numpy
+  - pandas
+  - scikit-learn
+  - sentence-transformers
+  - requests
+  - tqdm
+  - pydantic
+  - python-dotenv
+  - openpyxl
+  - pytest
+  - rich
+  - pip
+  - pip:
+    - transformers
+    - fastembed  # for quantized bge model if needed
+    - llama-cpp-python  # local LLMs if CPU/GPU support
+
