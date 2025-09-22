@@ -15,6 +15,15 @@ from typing import Any, Dict, List, Optional
 from dataclasses import asdict
 
 from app.llm_provider import LLMProvider, LLMConfig
+try:
+    # Prefer centralized settings for model defaults
+    from app.settings import settings
+    _DEFAULT_LLM_MODEL = settings.llm_model
+    _DEFAULT_MAX_NEW_TOKENS = settings.llm_max_new_tokens
+except Exception:
+    # Fallback to hardcoded safe defaults
+    _DEFAULT_LLM_MODEL = "Qwen/Qwen2.5-3B-Instruct"
+    _DEFAULT_MAX_NEW_TOKENS = 256
 
 # ---------------------------
 # Public API
@@ -27,8 +36,8 @@ def generate_answer(
     # {"mode":..,"confidence":..,"start":..,"end":..}
     time_filters: Dict[str, Any],
     mode: str,
-    llm_model: str = "openai/gpt-oss-20b",
-    max_new_tokens: int = 256,
+    llm_model: str = _DEFAULT_LLM_MODEL,
+    max_new_tokens: int = _DEFAULT_MAX_NEW_TOKENS,
 ) -> str:
     """
     Returns a short answer followed by 2–3 concise rationale bullets.

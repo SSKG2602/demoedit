@@ -412,7 +412,8 @@ def _cli():
         f"\nTop-{args.k} for: {args.query!r} | mode={args.mode} | window={args.time or 'None'}\n")
     for i, c in enumerate(out.candidates, 1):
         print(f"{i:02d}. total={c.score_total:.3f}  sim={c.score_sim:.3f}  time={c.score_time:.3f}  age={c.score_age:.3f}")
-        print(f"    {c.text[:140].replace('\\n',' ')}")
+        preview = c.text[:140].replace("\n", " ")
+        print(f"    {preview}")
         print(
             f"    chunk_id={c.chunk_id}  doc_id={c.doc_id}  src={c.source_path}\n")
 

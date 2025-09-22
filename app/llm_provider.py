@@ -19,16 +19,29 @@ import traceback
 from dataclasses import dataclass
 from typing import List, Dict, Optional
 
+# Resolve defaults from centralized settings if available; otherwise env
+try:  # Prefer app.settings to honor .env
+    from app.settings import settings  # type: ignore
+    _DEFAULT_LLM_MODEL = settings.llm_model
+    _DEFAULT_MAX_NEW_TOKENS = settings.llm_max_new_tokens
+except Exception:
+    _DEFAULT_LLM_MODEL = os.environ.get(
+        "CR_LLM_MODEL", "Qwen/Qwen2.5-3B-Instruct")
+    try:
+        _DEFAULT_MAX_NEW_TOKENS = int(
+            os.environ.get("CR_LLM_MAX_NEW_TOKENS", "256"))
+    except Exception:
+        _DEFAULT_MAX_NEW_TOKENS = 256
+
 
 @dataclass
 class LLMConfig:
-    model_name: str = os.environ.get(
-        "CR_LLM_MODEL", "openai/gpt-oss-20b")  # HF name
+    model_name: str = _DEFAULT_LLM_MODEL  # HF name
     # "hf" | "llama.cpp"
     backend: str = os.environ.get("CR_LLM_BACKEND", "hf")
     gguf_path: Optional[str] = os.environ.get(
         "CR_LLM_PATH")                 # ./models/model.gguf
-    max_new_tokens: int = int(os.environ.get("CR_LLM_MAX_NEW_TOKENS", "256"))
+    max_new_tokens: int = _DEFAULT_MAX_NEW_TOKENS
     temperature: float = float(os.environ.get("CR_LLM_TEMPERATURE", "0.2"))
     top_p: float = float(os.environ.get("CR_LLM_TOP_P", "0.95"))
 
@@ -83,26 +96,57 @@ class LLMProvider:
         name = self.cfg.model_name
         trust_remote = name.startswith(
             "Qwen/") or bool(int(os.environ.get("CR_TRUST_REMOTE_CODE", "1")))
-        self._log(
-            f"loading HF model: {name} (trust_remote_code={trust_remote})")
 
-        # Qwen-family models often rely on custom modeling code; trust_remote_code=True is common.
+        # Determine compute device and dtype without requiring accelerate
+        has_mps = hasattr(
+            torch.backends, "mps") and torch.backends.mps.is_available()
+        has_cuda = torch.cuda.is_available()
+        device = (
+            torch.device("cuda") if has_cuda else
+            torch.device("mps") if has_mps else
+            torch.device("cpu")
+        )
+        # Use fp16/bf16 on GPU/MPS, fp32 on CPU for compatibility
+        if device.type == "cpu":
+            dtype = torch.float32
+        else:
+            dtype = getattr(torch, "bfloat16", None) or getattr(
+                torch, "float16", torch.float16)
+
+        # Only use device_map if accelerate is available (to avoid the error you saw)
+        try:
+            import accelerate  # noqa: F401
+            can_use_device_map = os.environ.get("CR_USE_DEVICE_MAP", "1").lower() not in {
+                "0", "false", "no"}
+        except Exception:
+            can_use_device_map = False
+
+        self._log(
+            f"loading HF model: {name} (trust_remote_code={trust_remote}, device={device}, device_map={'auto' if can_use_device_map else 'none'})")
+
+        # Tokenizer
         self._tok = AutoTokenizer.from_pretrained(
             name, trust_remote_code=trust_remote)
-        self._model = AutoModelForCausalLM.from_pretrained(
-            name,
-            device_map="auto",
-            torch_dtype=(getattr(torch, "bfloat16", None)
-                         or getattr(torch, "float16", None)),
-            trust_remote_code=trust_remote,
-        )
+
+        # Model load
+        kwargs = dict(trust_remote_code=trust_remote, torch_dtype=dtype)
+        if can_use_device_map:
+            kwargs["device_map"] = "auto"
+        self._model = AutoModelForCausalLM.from_pretrained(name, **kwargs)
+
+        # If we didn't use device_map, move to the chosen device explicitly (for small models)
+        if not can_use_device_map and device.type != "cpu":
+            try:
+                self._model.to(device)
+            except Exception:
+                # If moving fails (e.g., not enough memory), keep on CPU; generation may be slow
+                self._log("Could not move model to GPU/MPS, keeping on CPU")
 
         # Make sure pad_token_id is set (some instruct models leave it None)
         if getattr(self._tok, "pad_token_id", None) is None and getattr(self._tok, "eos_token_id", None) is not None:
             self._tok.pad_token_id = self._tok.eos_token_id
 
-        # On Apple Silicon, prefer MPS when available (device_map="auto" usually handles this)
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        if has_mps:
             self._log("MPS available")
 
         self._log("HF model loaded")
