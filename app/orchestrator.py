@@ -181,7 +181,7 @@ def _estimate_uncertainty(cands: List[Candidate]) -> float:
     if len(cands) < 2:
         return 1.0
     xs = np.array([c.score_total for c in cands], dtype=np.float32)
-    xs = (xs - xs.min()) / (xs.ptp() + 1e-6)
+    xs = (xs - xs.min()) / (np.ptp(xs) + 1e-6)
     std = float(xs.std())
     # high std → more separation → LOWER uncertainty
     return float(max(0.0, 1.0 - std))

@@ -88,6 +88,28 @@ class LLMProvider:
             self._log("FAILED to load LLM; using fallback")
             traceback.print_exc()
 
+    def _select_dtype(self, torch_mod, device):
+        """Pick the safest tensor dtype for the current accelerator."""
+        if device.type == "cpu":
+            return torch_mod.float32
+        if device.type == "cuda":
+            supports_bf16 = False
+            if hasattr(torch_mod, "cuda") and hasattr(torch_mod.cuda, "is_bf16_supported"):
+                try:
+                    supports_bf16 = bool(torch_mod.cuda.is_bf16_supported())
+                except Exception:
+                    supports_bf16 = False
+            if supports_bf16 and hasattr(torch_mod, "bfloat16"):
+                return torch_mod.bfloat16
+            if supports_bf16:
+                self._log("CUDA device reports bfloat16 support but torch lacks dtype; falling back to float16")
+            else:
+                self._log("CUDA device does not support bfloat16; using float16")
+            return getattr(torch_mod, "float16", torch_mod.float32)
+        if device.type == "mps":
+            return getattr(torch_mod, "float16", torch_mod.float32)
+        return torch_mod.float32
+
     # HF Transformers path (with Qwen-friendly options)
     def _load_hf(self) -> None:
         from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -106,12 +128,7 @@ class LLMProvider:
             torch.device("mps") if has_mps else
             torch.device("cpu")
         )
-        # Use fp16/bf16 on GPU/MPS, fp32 on CPU for compatibility
-        if device.type == "cpu":
-            dtype = torch.float32
-        else:
-            dtype = getattr(torch, "bfloat16", None) or getattr(
-                torch, "float16", torch.float16)
+        dtype = self._select_dtype(torch, device)
 
         # Only use device_map if accelerate is available (to avoid the error you saw)
         try:
@@ -122,7 +139,7 @@ class LLMProvider:
             can_use_device_map = False
 
         self._log(
-            f"loading HF model: {name} (trust_remote_code={trust_remote}, device={device}, device_map={'auto' if can_use_device_map else 'none'})")
+            f"loading HF model: {name} (trust_remote_code={trust_remote}, device={device}, dtype={dtype}, device_map={'auto' if can_use_device_map else 'none'})")
 
         # Tokenizer
         self._tok = AutoTokenizer.from_pretrained(
@@ -137,7 +154,7 @@ class LLMProvider:
         # If we didn't use device_map, move to the chosen device explicitly (for small models)
         if not can_use_device_map and device.type != "cpu":
             try:
-                self._model.to(device)
+                self._model.to(device=device, dtype=dtype)
             except Exception:
                 # If moving fails (e.g., not enough memory), keep on CPU; generation may be slow
                 self._log("Could not move model to GPU/MPS, keeping on CPU")
