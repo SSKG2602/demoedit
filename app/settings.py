@@ -7,13 +7,16 @@ Uses environment variables with safe defaults for local dev.
 """
 from __future__ import annotations
 from pathlib import Path
+from typing import Any, Dict
 import os
 
 # Optional dependencies: support both Pydantic v1 and v2, and run without pydantic-settings
 _IMPL = "unknown"
+model_validator = None  # type: ignore[assignment]
+root_validator = None  # type: ignore[assignment]
 try:
     # Pydantic v2 preferred path
-    from pydantic import Field  # type: ignore
+    from pydantic import Field, model_validator  # type: ignore
     from pydantic_settings import BaseSettings as _BaseSettings, SettingsConfigDict  # type: ignore
     _IMPL = "pydantic-v2"
 except Exception:  # pydantic-settings missing or older pydantic
@@ -21,7 +24,7 @@ except Exception:  # pydantic-settings missing or older pydantic
         import pydantic as _p
         from pydantic import Field  # type: ignore
         if getattr(_p, "__version__", "2").startswith("1."):
-            from pydantic import BaseSettings as _BaseSettings  # type: ignore
+            from pydantic import BaseSettings as _BaseSettings, root_validator  # type: ignore
             SettingsConfigDict = None  # type: ignore
             _IMPL = "pydantic-v1"
         else:
@@ -40,48 +43,91 @@ except Exception:  # pydantic-settings missing or older pydantic
 ROOT = Path(__file__).resolve().parents[1]
 
 
+_ENV_ALIAS_MAP = {
+    "gamma_auth": "gamma_authority",
+}
+
+
+def _normalize_env_values(raw: Any) -> Any:
+    """Map legacy CR_* keys to model fields for BaseSettings."""
+
+    if not isinstance(raw, dict):
+        return raw
+
+    normalized: Dict[str, Any] = {}
+    for key, value in raw.items():
+        key_str = str(key)
+        key_lower = key_str.lower()
+
+        if key_lower.startswith("cr_"):
+            key_lower = key_lower[3:]
+
+        field_name = _ENV_ALIAS_MAP.get(key_lower, key_lower)
+        normalized.setdefault(field_name, value)
+
+    return normalized
+
+
 if _IMPL in {"pydantic-v1", "pydantic-v2"}:
     # Pydantic-backed settings (v1 or v2)
     class Settings(_BaseSettings):
         # ---- service ----
-        api_host: str = Field("0.0.0.0", env="CR_API_HOST")  # type: ignore
-        api_port: int = Field(8000, env="CR_API_PORT")  # type: ignore
-        log_verbose: bool = Field(True, env="CR_LOG_VERBOSE")  # type: ignore
+        api_host: str = Field("0.0.0.0")  # type: ignore
+        api_port: int = Field(8000)  # type: ignore
+        log_verbose: bool = Field(True)  # type: ignore
 
         # ---- data & index ----
-        data_dir: Path = ROOT / "data"
-        index_dir: Path = ROOT / "indexes"
-        chunks_csv: Path = ROOT / "data" / "chunks.csv"
-        meta_parquet: Path = ROOT / "data" / "chunk_meta.parquet"
-        ids_npy: Path = ROOT / "data" / "chunk_ids.npy"
-        faiss_index: Path = ROOT / "indexes" / "faiss.index"
+        data_dir: Path = Field(ROOT / "data")  # type: ignore[arg-type]
+        index_dir: Path = Field(ROOT / "indexes")  # type: ignore[arg-type]
+        chunks_csv: Path = Field(ROOT / "data" / "chunks.csv")  # type: ignore[arg-type]
+        meta_parquet: Path = Field(
+            ROOT / "data" / "chunk_meta.parquet"
+        )  # type: ignore[arg-type]
+        ids_npy: Path = Field(ROOT / "data" / "chunk_ids.npy")  # type: ignore[arg-type]
+        faiss_index: Path = Field(
+            ROOT / "indexes" / "faiss.index"
+        )  # type: ignore[arg-type]
 
         # ---- models ----
-        embed_model: str = Field("BAAI/bge-small-en-v1.5", env="CR_EMBED_MODEL")  # type: ignore
-        prefer_fastembed: bool = Field(True, env="CR_PREFER_FASTEMBED")  # type: ignore
-        llm_model: str = Field("openai/gpt-oss-20b", env="CR_LLM_MODEL")  # type: ignore
-        llm_max_new_tokens: int = Field(256, env="CR_LLM_MAX_NEW_TOKENS")  # type: ignore
+        embed_model: str = Field("BAAI/bge-small-en-v1.5")  # type: ignore
+        prefer_fastembed: bool = Field(True)  # type: ignore
+        llm_model: str = Field("openai/gpt-oss-20b")  # type: ignore
+        llm_max_new_tokens: int = Field(256)  # type: ignore
 
         # ---- retrieval weights (POLAR-lite) ----
-        alpha: float = Field(0.55, env="CR_ALPHA")  # type: ignore
-        beta_time: float = Field(0.25, env="CR_BETA_TIME")  # type: ignore
-        gamma_authority: float = Field(0.15, env="CR_GAMMA_AUTH")  # type: ignore
-        delta_age: float = Field(0.05, env="CR_DELTA_AGE")  # type: ignore
+        alpha: float = Field(0.55)  # type: ignore
+        beta_time: float = Field(0.25)  # type: ignore
+        gamma_authority: float = Field(0.15)  # type: ignore
+        delta_age: float = Field(0.05)  # type: ignore
 
         # ---- controller (DHQC-lite) ----
-        tau: float = Field(0.80, env="CR_TAU")  # type: ignore
-        delta: float = Field(0.20, env="CR_DELTA")  # type: ignore
-        n_max: int = Field(3, env="CR_N_MAX")  # type: ignore
+        tau: float = Field(0.80)  # type: ignore
+        delta: float = Field(0.20)  # type: ignore
+        n_max: int = Field(3)  # type: ignore
 
         if _IMPL == "pydantic-v2":
             model_config = SettingsConfigDict(  # type: ignore[call-arg]
                 env_file=str(ROOT / ".env"),
                 env_file_encoding="utf-8",
+                case_sensitive=False,
+                extra="ignore",
             )
+
+            @model_validator(mode="before")  # type: ignore[misc]
+            @classmethod
+            def _coerce_env(cls, data: Any) -> Any:
+                return _normalize_env_values(data)
+
         else:
             class Config:  # type: ignore[no-redef]
                 env_file = str(ROOT / ".env")
                 env_file_encoding = "utf-8"
+                case_sensitive = False
+                extra = "ignore"
+
+            @root_validator(pre=True)  # type: ignore[misc]
+            def _coerce_env(cls, values: Any) -> Any:  # type: ignore[override]
+                return _normalize_env_values(values)
 
     settings = Settings()
 else:
