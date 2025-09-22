@@ -14,6 +14,7 @@ authors = [{ name = "SSKG", email = "dev@example.com" }]
 dependencies = [
   "fastapi",
   "uvicorn",
+  "httpx",
   "pydantic",
   "pydantic-settings",
   "pandas",
